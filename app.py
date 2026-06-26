@@ -9,31 +9,38 @@ st.set_page_config(page_title="KPI PaintShop Multi-Taller", layout="wide", initi
 # --- CONEXIÓN AUTOMÁTICA A GOOGLE SHEETS ---
 def conectar_base_datos():
     try:
-        # Usamos la conexión segura nativa de Streamlit para Google Sheets
-        # Busca las credenciales y la URL ocultas en los "Secrets" de la plataforma
+        # Método directo usando la URL guardada en Secrets
         url_hoja = st.secrets["private_gsheets_url"]
-        gc = gspread.service_account_from_dict(st.secrets["gspread_credentials"])
-        sh = gc.open_by_url(url_hoja)
-        return sh.sheet1
+        # Abrimos la hoja de forma pública/compartida a través de gspread
+        gc = gspread.public_link(url_hoja)
+        return gc.sheet1
     except Exception as e:
-        st.error(f"⚠️ Error de conexión con la base de datos: {e}")
-        st.info("💡 Asegúrate de haber configurado correctamente los 'Secrets' en el panel de control de Streamlit Cloud.")
-        return None
+        # Intento secundario si el método directo tiene restricciones de versión
+        try:
+            url_hoja = st.secrets["private_gsheets_url"]
+            # Alternativa alternativa nativa de lectura
+            df_direct = pd.read_csv(url_hoja.replace('/edit', '/export?format=csv'))
+            return df_direct
+        except:
+            st.error(f"⚠️ Error de conexión con la base de datos: {e}")
+            st.info("💡 Recuerda que tu Google Sheet debe estar compartido como 'Cualquier persona con el enlace puede editar'.")
+            return None
 
-sheet_db = conectar_base_datos()
+objeto_conexion = conectar_base_datos()
 
-# Cargar datos desde Google Sheets si la conexión es exitosa
-if sheet_db is not None:
-    try:
-        records = sheet_db.get_all_records()
-        if records:
-            df_total = pd.DataFrame(records)
-        else:
-            df_total = pd.DataFrame(columns=["Taller", "Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material"])
-    except:
-        df_total = pd.DataFrame(columns=["Taller", "Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material"])
-else:
-    df_total = pd.DataFrame(columns=["Taller", "Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material"])
+# Cargar datos desde la conexión
+df_total = pd.DataFrame(columns=["Taller", "Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material"])
+
+if objeto_conexion is not None:
+    if isinstance(objeto_conexion, pd.DataFrame):
+        df_total = objeto_conexion
+    else:
+        try:
+            records = objeto_conexion.get_all_records()
+            if records:
+                df_total = pd.DataFrame(records)
+        except:
+            pass
 
 # --- ESTILOS PERSONALIZADOS ---
 st.markdown("""
@@ -74,17 +81,19 @@ with st.sidebar.form("formulario_taller"):
     guardar = st.form_submit_button("💾 Guardar en Base de Datos")
 
 # Procesar y subir datos a Google Sheets
-if guardar and sheet_db is not None:
-    if not df_total.empty and ((df_total['Taller'] == taller_seleccionado) & (df_total['Mes'] == mes_input)).any():
+if guardar and objeto_conexion is not None and not isinstance(objeto_conexion, pd.DataFrame):
+    if not df_total.empty and 'Taller' in df_total.columns and ((df_total['Taller'] == taller_seleccionado) & (df_total['Mes'] == mes_input)).any():
         st.sidebar.warning("Ya existen datos para este mes. Modifícalos directamente en el Excel si lo necesitas.")
     else:
         nueva_fila = [taller_seleccionado, mes_input, h_fact, h_real, paneles, venta, coste]
-        sheet_db.append_row(nueva_fila)
+        objeto_conexion.append_row(nueva_fila)
         st.sidebar.success(f"¡Datos de {mes_input} guardados en la nube!")
         st.rerun()
+elif guardar:
+    st.sidebar.error("El modo de almacenamiento actual es de solo lectura. Revisa la conexión.")
 
 # --- FILTRADO DE DATOS PARA MOSTRAR EN PANTALLA ---
-if not df_total.empty and taller_seleccionado in df_total['Taller'].values:
+if not df_total.empty and 'Taller' in df_total.columns and taller_seleccionado in df_total['Taller'].values:
     df = df_total[df_total['Taller'] == taller_seleccionado].copy()
 else:
     df = pd.DataFrame({
@@ -93,19 +102,19 @@ else:
     })
 
 # --- CÁLCULO DE KPIS CONSOLIDADOS ---
-total_venta = df['Venta_Pintura'].sum()
-total_coste = df['Coste_Material'].sum()
-total_paneles = df['Paneles_Pintados'].sum()
-total_h_fact = df['Horas_Facturadas'].sum()
-total_h_real = df['Horas_Reales'].sum()
+total_venta = df['Venta_Pintura'].sum() if 'Venta_Pintura' in df.columns else 0
+total_coste = df['Coste_Material'].sum() if 'Coste_Material' in df.columns else 0
+total_paneles = df['Paneles_Pintados'].sum() if 'Paneles_Pintados' in df.columns else 0
+total_h_fact = df['Horas_Facturadas'].sum() if 'Horas_Facturadas' in df.columns else 0
+total_h_real = df['Horas_Reales'].sum() if 'Horas_Reales' in df.columns else 0
 
 margen_global = ((total_venta - total_coste) / total_venta) * 100 if total_venta > 0 else 0
 coste_panel_global = total_coste / total_paneles if total_paneles > 0 else 0
 eficiencia_global = (total_h_fact / total_h_real) * 100 if total_h_real > 0 else 0
 
 df['Margen Bruto (%)'] = ((df['Venta_Pintura'] - df['Coste_Material']) / df['Venta_Pintura'] * 100).round(1) if total_venta > 0 else 0
-df['Coste por Panel (€)'] = (df['Coste_Material'] / df['Paneles_Pintados']).round(2)
-df['Eficiencia Pintores (%)'] = (df['Horas_Facturadas'] / df['Horas_Reales'] * 100).round(1)
+df['Coste por Panel (€)'] = (df['Coste_Material'] / df['Paneles_Pintados']).round(2) if 'Paneles_Pintados' in df.columns else 0
+df['Eficiencia Pintores (%)'] = (df['Horas_Facturadas'] / df['Horas_Reales'] * 100).round(1) if 'Horas_Reales' in df.columns else 0
 
 # --- PANEL VISUAL ---
 st.markdown(f"### 🏆 Rendimiento Acumulado: {taller_seleccionado}")
@@ -126,19 +135,21 @@ g1, g2 = st.columns(2)
 
 with g1:
     st.subheader("Brecha Financiera: Venta vs Coste de Material")
-    fig_fin = px.bar(df, x="Mes", y=["Venta_Pintura", "Coste_Material"], 
-                     barmode="group", labels={"value": "Euros (€)", "variable": "Concepto"},
-                     color_discrete_sequence=["#1E3A8A", "#EF4444"])
-    st.plotly_chart(fig_fin, use_container_width=True)
+    if 'Venta_Pintura' in df.columns and 'Coste_Material' in df.columns:
+        fig_fin = px.bar(df, x="Mes", y=["Venta_Pintura", "Coste_Material"], 
+                         barmode="group", labels={"value": "Euros (€)", "variable": "Concepto"},
+                         color_discrete_sequence=["#1E3A8A", "#EF4444"])
+        st.plotly_chart(fig_fin, use_container_width=True)
 
 with g2:
     st.subheader("Evolución del Coste por Panel")
-    fig_coste = px.line(df, x="Mes", y="Coste por Panel (€)", markers=True, color_discrete_sequence=["#10B981"])
-    if df['Coste por Panel (€)'].max() > 0:
-        fig_coste.add_hline(y=35.0, line_dash="dash", line_color="red", annotation_text="Límite Máximo")
-    st.plotly_chart(fig_coste, use_container_width=True)
+    if 'Coste por Panel (€)' in df.columns:
+        fig_coste = px.line(df, x="Mes", y="Coste por Panel (€)", markers=True, color_discrete_sequence=["#10B981"])
+        if df['Coste por Panel (€)'].max() > 0:
+            fig_coste.add_hline(y=35.0, line_dash="dash", line_color="red", annotation_text="Límite Máximo")
+        st.plotly_chart(fig_coste, use_container_width=True)
 
 # --- TABLA CRUDA ---
 st.markdown("### 📋 Histórico Analítico Filtro Taller")
-st.dataframe(df[["Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material", "Margen Bruto (%)", "Coste por Panel (€)", "Eficiencia Pintores (%)"]], 
-             use_container_width=True, hide_index=True)
+columnas_visibles = [c for c in ["Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material", "Margen Bruto (%)", "Coste por Panel (€)", "Eficiencia Pintores (%)"] if c in df.columns]
+st.dataframe(df[columnas_visibles], use_container_width=True, hide_index=True)
