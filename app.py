@@ -36,10 +36,12 @@ st.sidebar.header("🏢 Gestión de Talleres")
 # Método de selección: ¿Quiere usar uno existente o crear uno nuevo?
 modo_taller = st.sidebar.radio("¿Qué deseas hacer?", ["Seleccionar Taller Existente", "Crear / Registrar Nuevo Taller"])
 
+# Inicializamos la variable para evitar el NameError bajo cualquier condición
+taller_seleccionado = ""
+
 if modo_taller == "Seleccionar Taller Existente" and lista_talleres_existentes:
     taller_seleccionado = st.sidebar.selectbox("Elige el taller para ver o añadir datos:", lista_talleres_existentes)
 else:
-    # Campo libre de texto FUERA del formulario para que funcione perfectamente
     taller_nuevo_input = st.sidebar.text_input("Escribe el nombre del nuevo taller:", value="")
     taller_seleccionado = taller_nuevo_input.strip()
     if not taller_seleccionado:
