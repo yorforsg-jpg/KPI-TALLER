@@ -24,21 +24,32 @@ except Exception as e:
 if df_total.empty or "Taller" not in df_total.columns:
     df_total = pd.DataFrame(columns=["Taller", "Mes", "Horas_Facturadas", "Horas_Reales", "Paneles_Pintados", "Venta_Pintura", "Coste_Material"])
 
+# --- OBTENER LISTA DE TALLERES EXISTENTES ---
+# Extrae los nombres de talleres que ya se han guardado en el Excel para el buscador visual
+if not df_total.empty:
+    lista_talleres_existentes = sorted(df_total['Taller'].unique().astype(str))
+else:
+    lista_talleres_existentes = []
+
 # --- FORMULARIO LATERAL: SELECCIÓN DE TALLER Y REGISTRO ---
 st.sidebar.header("🏢 Identificación y Datos")
 
-taller_seleccionado = st.sidebar.selectbox("Selecciona tu Taller / Usuario", [
-    "Taller Central", 
-    "Taller Norte", 
-    "Taller Sur", 
-    "Taller Pintura Express",
-    "Gestor Invitado"
-])
+# 1. VISUALIZACIÓN: Selector para ver gráficos de talleres que ya existen
+st.sidebar.subheader("🔍 Ver KPIs de un Taller")
+if lista_talleres_existentes:
+    taller_seleccionado = st.sidebar.selectbox("Selecciona un taller registrado para ver sus datos:", lista_talleres_existentes)
+else:
+    taller_seleccionado = "Taller Inicial"
+    st.sidebar.info("Aún no hay talleres guardados. ¡Crea el primero abajo!")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**Registrando datos para:** {taller_seleccionado}")
 
+# 2. ENTRADA DE DATOS: Formulario para añadir datos escribiendo el nombre del taller libremente
+st.sidebar.subheader("📝 Registrar / Crear Taller")
 with st.sidebar.form("formulario_taller"):
+    # ¡Aquí está el cambio clave! Campo libre para escribir cualquier nombre
+    taller_input = st.text_input("Nombre de tu Taller (Escríbelo para crearlo o añadir datos)", value=taller_seleccionado if taller_seleccionado != "Taller Inicial" else "").strip()
+    
     mes_input = st.selectbox("Selecciona el Mes", [
         "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
         "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
@@ -49,41 +60,44 @@ with st.sidebar.form("formulario_taller"):
     venta = st.number_input("Venta Total Pintura (€)", min_value=0.0, step=100.0, value=15000.0)
     coste = st.number_input("Coste Total Material Consumido (€)", min_value=0.0, step=100.0, value=5000.0)
     
-    guardar = st.form_submit_button("💾 Guardar en Base de Datos")
+    guardar = st.form_submit_button("💾 Guardar y Sincronizar")
 
 # Procesar y subir datos a Google Sheets si se pulsa el botón
 if guardar:
-    # Validar si ya existe el registro para evitar duplicados en la pantalla visual
-    registro_existe = not df_total.empty and ((df_total['Taller'] == taller_seleccionado) & (df_total['Mes'] == mes_input)).any()
-    
-    if registro_existe:
-        st.sidebar.warning(f"Ya existen datos de {mes_input} para {taller_seleccionado}.")
+    if not taller_input:
+        st.sidebar.error("⚠️ Por favor, escribe un nombre válido para el taller.")
     else:
-        # Añadir nueva fila al DataFrame local
-        nueva_fila = pd.DataFrame([{
-            "Taller": taller_seleccionado, 
-            "Mes": mes_input, 
-            "Horas_Facturadas": h_fact, 
-            "Horas_Reales": h_real, 
-            "Paneles_Pintados": paneles, 
-            "Venta_Pintura": venta, 
-            "Coste_Material": coste
-        }])
-        df_actualizado = pd.concat([df_total, nueva_fila], ignore_index=True)
+        # Validar si ya existe el registro para ese taller y mes concretos
+        registro_existe = not df_total.empty and ((df_total['Taller'].astype(str) == taller_input) & (df_total['Mes'] == mes_input)).any()
         
-        try:
-            # Subir y sobreescribir la hoja de Google Sheets completa con el nuevo dato
-            conn.update(data=df_actualizado)
-            st.sidebar.success(f"¡Datos de {mes_input} guardados con éxito!")
-            st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"Error al escribir en la base de datos: {e}")
+        if registro_existe:
+            st.sidebar.warning(f"Ya existen datos de {mes_input} para {taller_input}. Borra la fila en tu Excel si deseas modificarlo.")
+        else:
+            # Añadir nueva fila al DataFrame local
+            nueva_fila = pd.DataFrame([{
+                "Taller": taller_input, 
+                "Mes": mes_input, 
+                "Horas_Facturadas": h_fact, 
+                "Horas_Reales": h_real, 
+                "Paneles_Pintados": paneles, 
+                "Venta_Pintura": venta, 
+                "Coste_Material": coste
+            }])
+            df_actualizado = pd.concat([df_total, nueva_fila], ignore_index=True)
+            
+            try:
+                # Subir y sobreescribir la hoja de Google Sheets completa con el nuevo dato libre
+                conn.update(data=df_actualizado)
+                st.sidebar.success(f"¡Datos de {taller_input} ({mes_input}) guardados!")
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Error al escribir en la base de datos: {e}")
 
 # --- FILTRADO DE DATOS PARA MOSTRAR EN PANTALLA ---
 if not df_total.empty and taller_seleccionado in df_total['Taller'].values:
     df = df_total[df_total['Taller'] == taller_seleccionado].copy()
 else:
-    # Datos por defecto si el taller seleccionado no tiene registros guardados aún
+    # Datos vacíos de cortesía si el sistema acaba de arrancar de cero
     df = pd.DataFrame({
         "Taller": [taller_seleccionado], "Mes": ["Sin Datos"], "Horas_Facturadas": [0], 
         "Horas_Reales": [1], "Paneles_Pintados": [1], "Venta_Pintura": [0.0], "Coste_Material": [0.0]
@@ -106,7 +120,7 @@ df['Coste por Panel (€)'] = (pd.to_numeric(df['Coste_Material']) / pd.to_numer
 df['Eficiencia Pintores (%)'] = ((pd.to_numeric(df['Horas_Facturadas']) / pd.to_numeric(df['Horas_Reales'])) * 100).round(1)
 
 # --- PANEL VISUAL ---
-st.markdown(f"### 🏆 Rendimiento Acumulado: {taller_seleccionado}")
+st.markdown(f"### 🏆 Rendimiento Acumulado Analizado: {taller_seleccionado}")
 kpi1, kpi2, kpi3 = st.columns(3)
 
 with kpi1:
