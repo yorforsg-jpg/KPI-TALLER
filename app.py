@@ -6,24 +6,24 @@ import gspread
 # Configuración de la página web
 st.set_page_config(page_title="KPI PaintShop Multi-Taller", layout="wide", initial_sidebar_state="expanded")
 
-# --- CONEXIÓN AUTOMÁTICA A GOOGLE SHEETS (BASE DE DATOS) ---
-# REEMPLAZA ESTE ENLACE POR EL DE TU PROPIA HOJA DE GOOGLE SHEETS:
-URL_HOJA = "https://docs.google.com/spreadsheets/d/1tyMR_aQTSetE8d1qyEr0ZUWTJvR0riC073TNmICHkiQ/edit?gid=0#gid=0"
-
+# --- CONEXIÓN AUTOMÁTICA A GOOGLE SHEETS ---
 def conectar_base_datos():
     try:
-        # Conexión simplificada para Streamlit Cloud usando modo público-editor
-        gc = gspread.public_link(URL_HOJA)
-        sheet = gc.sheet1
-        return sheet
+        # Usamos la conexión segura nativa de Streamlit para Google Sheets
+        # Busca las credenciales y la URL ocultas en los "Secrets" de la plataforma
+        url_hoja = st.secrets["private_gsheets_url"]
+        gc = gspread.service_account_from_dict(st.secrets["gspread_credentials"])
+        sh = gc.open_by_url(url_hoja)
+        return sh.sheet1
     except Exception as e:
-        st.error(f"Error de conexión con la base de datos: {e}")
+        st.error(f"⚠️ Error de conexión con la base de datos: {e}")
+        st.info("💡 Asegúrate de haber configurado correctamente los 'Secrets' en el panel de control de Streamlit Cloud.")
         return None
 
 sheet_db = conectar_base_datos()
 
-# Cargar datos desde Google Sheets
-if sheet_db:
+# Cargar datos desde Google Sheets si la conexión es exitosa
+if sheet_db is not None:
     try:
         records = sheet_db.get_all_records()
         if records:
@@ -49,7 +49,6 @@ st.caption("Los datos se guardan y sincronizan automáticamente en la nube de fo
 # --- FORMULARIO LATERAL: SELECCIÓN DE TALLER Y REGISTRO ---
 st.sidebar.header("🏢 Identificación y Datos")
 
-# Selector de taller para evitar mezclar datos
 taller_seleccionado = st.sidebar.selectbox("Selecciona tu Taller / Usuario", [
     "Taller Central", 
     "Taller Norte", 
@@ -76,9 +75,8 @@ with st.sidebar.form("formulario_taller"):
 
 # Procesar y subir datos a Google Sheets
 if guardar and sheet_db is not None:
-    # Comprobar si ya existen datos para ese mismo taller y mes para sobreescribirlos o añadirlos
     if not df_total.empty and ((df_total['Taller'] == taller_seleccionado) & (df_total['Mes'] == mes_input)).any():
-        st.sidebar.warning("Ya existen datos para este mes. Limpia la fila en tu Google Sheet si deseas modificarlos.")
+        st.sidebar.warning("Ya existen datos para este mes. Modifícalos directamente en el Excel si lo necesitas.")
     else:
         nueva_fila = [taller_seleccionado, mes_input, h_fact, h_real, paneles, venta, coste]
         sheet_db.append_row(nueva_fila)
@@ -86,11 +84,9 @@ if guardar and sheet_db is not None:
         st.rerun()
 
 # --- FILTRADO DE DATOS PARA MOSTRAR EN PANTALLA ---
-# La web solo mostrará los gráficos correspondientes al taller que esté seleccionado en el menú izquierdo
 if not df_total.empty and taller_seleccionado in df_total['Taller'].values:
     df = df_total[df_total['Taller'] == taller_seleccionado].copy()
 else:
-    # Datos semilla vacíos si el taller seleccionado aún no ha registrado nada
     df = pd.DataFrame({
         "Taller": [taller_seleccionado], "Mes": ["Sin Datos"], "Horas_Facturadas": [1], 
         "Horas_Reales": [1], "Paneles_Pintados": [1], "Venta_Pintura": [0.0], "Coste_Material": [0.0]
